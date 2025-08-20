@@ -179,3 +179,12 @@ app.listen(PORT, async () => {
 
   await connectDatabase();
 });
+
+process.on("SIGINT", async () => {
+  console.log("\n🛑 서버를 종료합니다...");
+  if (connection) {
+    await connection.end();
+    console.log("✅ 데이터베이스 연결 종료");
+  }
+  process.exit(0);
+});
