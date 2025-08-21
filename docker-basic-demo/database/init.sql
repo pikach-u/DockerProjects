@@ -7,7 +7,7 @@ CREATE DATABASE IF NOT EXISTS simple_blog
     DEFAULT COLLATE utf8mb4_unicode_ci;
 USE simple_blog;
 
-CREATE TABLE IF NOT EXIST posts (
+CREATE TABLE IF NOT EXISTS posts (
     id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(200) NOT NULL,
     content TEXT NOT NULL, 
