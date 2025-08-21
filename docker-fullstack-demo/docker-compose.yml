@@ -1,0 +1,103 @@
+version: "3.8"
+
+services:
+  # MySQL 서비스
+  mysql:
+    image: mysql:8.0
+    container_name: blog-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: blog_db
+      MYSQL_USER: blog_user
+      MYSQL_PASSWORD: blogpassword
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+      # 추가 환경 변수
+      MYSQL_INIT_CONNECT: "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+      - --init-connect=SET NAMES utf8mb4
+      - --init-connect=SET collation_connection=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --default-time-zone=+09:00
+    volumes:
+      - blog_mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3306:3306"
+    networks:
+      - blog-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "blog_user",
+          "-pblogpassword",
+        ]
+      timeout: 20s
+      interval: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # 백엔드 서비스
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: blog-backend
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=blog_db
+      - DB_USER=blog_user
+      - DB_PASSWORD=blogpassword
+      - SERVER_PORT=8080
+      - SHOW_SQL=false
+      - LOG_LEVEL=INFO
+      - JAVA_OPTS=-Dfile.encoding=UTF-8 -Duser.timezone=Asia/Seoul
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - blog-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/posts/health"]
+      timeout: 10s
+      interval: 30s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # 프론트엔드 서비스
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: blog-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - blog-network
+    restart: unless-stopped
+
+volumes:
+  blog_mysql_data:
+    driver: local
+
+networks:
+  blog-network:
+    driver: bridge
