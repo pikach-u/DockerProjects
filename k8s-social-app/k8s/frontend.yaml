@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: simple-social
+  labels:
+    app: frontend
+    tier: frontend
+spec:
+  replicas: 2 # 가용성을 위해 2개 인스턴스 실행
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: simple-social-frontend:latest
+          imagePullPolicy: Never # 로컬 이미지 사용 (개발환경용)
+
+          ports:
+            - containerPort: 80
+              name: http
+              protocol: TCP
+
+          # 리소스 제한 설정 (정적 파일 서빙이므로 낮은 리소스 사용)
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+
+          # 헬스체크 설정
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+
+          # 보안 컨텍스트
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101 # nginx 사용자
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+
+          # 임시 디렉토리 마운트 (읽기 전용 파일시스템 사용 시 필요)
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+
+---
+# Frontend Service: 외부에서 접근 가능한 LoadBalancer 서비스
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: simple-social
+  labels:
+    app: frontend
+    tier: frontend
+spec:
+  type: LoadBalancer # 외부 접근을 위한 LoadBalancer (minikube에서는 NodePort로 동작)
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+  sessionAffinity: None
+
+---
+# Ingress: 도메인 기반 라우팅 (옵션)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  namespace: simple-social
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+    - host: social-app.local # /etc/hosts에 추가 필요
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80

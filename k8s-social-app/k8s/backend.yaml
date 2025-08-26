@@ -1,0 +1,168 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: simple-social
+  labels:
+    app: backend
+    tier: backend
+spec:
+  replicas: 3 # 고가용성을 위해 3개 인스턴스 실행
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: backend
+    spec:
+      # 파드 재시작 정책
+      restartPolicy: Always
+
+      # 초기화 컨테이너: MySQL이 준비될 때까지 대기
+      initContainers:
+        - name: wait-for-mysql
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for MySQL to be ready..."
+              until nc -z mysql-service 3306; do
+                echo "MySQL is not ready yet. Waiting..."
+                sleep 2
+              done
+              echo "MySQL is ready!"
+
+      containers:
+        - name: backend
+          image: simple-social-backend:latest
+          imagePullPolicy: Never # 로컬 이미지 사용 (개발환경용)
+
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+
+          # 환경변수 설정
+          env:
+            # ConfigMap에서 환경변수 가져오기
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_HOST
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_NAME
+            - name: SPRING_PROFILES_ACTIVE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: SPRING_PROFILES_ACTIVE
+            # Secret에서 민감한 정보 가져오기
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: DB_PASSWORD
+            # JVM 옵션
+            - name: JAVA_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: JAVA_OPTS
+
+          # 리소스 제한 설정
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+
+          # 헬스체크 설정
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 60 # 스프링부트 시작 시간 고려
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # 우아한 종료를 위한 설정
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - "sleep 10" # 10초 대기 후 종료
+
+---
+# Backend Service: 백엔드 애플리케이션 접근을 위한 서비스
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: simple-social
+  labels:
+    app: backend
+    tier: backend
+spec:
+  type: ClusterIP # 클러스터 내부에서만 접근 (프론트엔드에서 프록시를 통해 접근)
+  selector:
+    app: backend
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  sessionAffinity: None # 로드밸런싱 시 세션 고정 없음
+
+---
+# HorizontalPodAutoscaler: CPU 사용률에 따른 자동 스케일링
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: simple-social
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

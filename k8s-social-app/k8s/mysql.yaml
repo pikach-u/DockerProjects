@@ -1,0 +1,159 @@
+# PersistentVolumeClaim: 데이터 영속성을 위한 스토리지 요청
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  namespace: simple-social
+spec:
+  accessModes:
+    - ReadWriteOnce # 단일 노드에서만 읽기/쓰기 가능
+  resources:
+    requests:
+      storage: 2Gi # 2GB 스토리지 요청
+  storageClassName: standard # 스토리지 클래스 (클러스터 환경에 따라 변경)
+
+---
+# ConfigMap: 데이터베이스 초기화 스크립트
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-init
+  namespace: simple-social
+data:
+  # 컨테이너 시작 시 실행될 SQL 스크립트
+  init.sql: |
+    CREATE DATABASE IF NOT EXISTS social_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    USE social_db;
+
+    -- 게시글 테이블 생성
+    CREATE TABLE IF NOT EXISTS posts (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      content TEXT NOT NULL,
+      author VARCHAR(100) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_created_at (created_at),
+      INDEX idx_author (author)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+    -- 샘플 데이터 삽입
+    INSERT IGNORE INTO posts (id, title, content, author) VALUES
+    (1, '🎉 첫 번째 게시글', '안녕하세요! 스프링부트와 리액트로 만든 소셜 앱에 오신 것을 환영합니다!', '관리자'),
+    (2, '🚀 쿠버네티스 배포 성공', 'K8s 클러스터에 애플리케이션이 성공적으로 배포되었습니다!', '개발자'),
+    (3, '📝 첫 번째 사용자 게시글', '정말 멋진 애플리케이션이네요! 사용하기 쉽고 빠르게 작동합니다.', '사용자1');
+
+---
+# MySQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: simple-social
+  labels:
+    app: mysql
+    tier: database
+spec:
+  replicas: 1 # 데이터베이스는 단일 인스턴스로 실행
+  strategy:
+    type: Recreate # 볼륨을 사용하므로 Recreate 전략 사용
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+        tier: database
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0.35
+          args:
+            - "--default-authentication-plugin=mysql_native_password"
+            - "--character-set-server=utf8mb4"
+            - "--collation-server=utf8mb4_unicode_ci"
+          env:
+            # 환경변수를 Secret에서 가져옴
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: DB_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: social_db
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: DB_USER
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: DB_PASSWORD
+          ports:
+            - containerPort: 3306
+              name: mysql
+          # 볼륨 마운트
+          volumeMounts:
+            - name: mysql-storage
+              mountPath: /var/lib/mysql
+            - name: mysql-init
+              mountPath: /docker-entrypoint-initdb.d
+          # 리소스 제한 설정
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          # 헬스체크 설정
+          livenessProbe:
+            exec:
+              command:
+                - mysqladmin
+                - ping
+                - -h
+                - localhost
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - mysqladmin
+                - ping
+                - -h
+                - localhost
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+      volumes:
+        - name: mysql-storage
+          persistentVolumeClaim:
+            claimName: mysql-pvc
+        - name: mysql-init
+          configMap:
+            name: mysql-init
+
+---
+# MySQL Service: 클러스터 내부에서 데이터베이스 접근을 위한 서비스
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+  namespace: simple-social
+  labels:
+    app: mysql
+    tier: database
+spec:
+  type: ClusterIP # 클러스터 내부에서만 접근 가능
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
+      protocol: TCP
+      name: mysql
