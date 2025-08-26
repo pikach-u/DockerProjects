@@ -27,3 +27,4 @@ data:
   # Base64로 인코딩된 값들 (kubectl create secret으로 생성하는 것이 안전)
   DB_USER: cm9vdA== # echo -n 'root' | base64
   DB_PASSWORD: cGFzc3dvcmQ= # echo -n 'password' | base64
+  DB_ROOT_PASSWORD: cGFzc3dvcmQ=

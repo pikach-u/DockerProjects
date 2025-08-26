@@ -1,0 +1,58 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: 🔨 Build JAR
+        run: |
+          chmod +x gradlew
+          ./gradlew build -x test
+
+      - name: 🐳 Build Docker Image
+        run: |
+          docker build -t my-spring-app .
+
+      - name: 💾 Save Docker Image
+        run: |
+          docker save my-spring-app > my-spring-app.tar
+
+      - name: 📤 Copy to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_KEY }}
+          source: my-spring-app.tar
+          target: /home/ubuntu/
+
+      - name: 🚀 Deploy on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_KEY }}
+          script: |
+            docker stop my-spring-app || true
+            docker rm my-spring-app || true
+            
+            docker load < /home/ubuntu/my-spring-app.tar
+            
+            docker run -d --name my-spring-app -p 8080:8080 my-spring-app
+            
+            rm /home/ubuntu/my-spring-app.tar

@@ -82,16 +82,6 @@ spec:
                   key: DB_ROOT_PASSWORD
             - name: MYSQL_DATABASE
               value: social_db
-            - name: MYSQL_USER
-              valueFrom:
-                secretKeyRef:
-                  name: app-secret
-                  key: DB_USER
-            - name: MYSQL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: app-secret
-                  key: DB_PASSWORD
           ports:
             - containerPort: 3306
               name: mysql
